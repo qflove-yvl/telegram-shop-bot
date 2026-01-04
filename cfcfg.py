@@ -68,7 +68,20 @@ class EditPrice(StatesGroup):
 
 edit_price_target = {}
 
-categories = ["Куртки","Футболки","Головные уборы","Обувь","Шорты","Зипки","Аксессуары"]
+categories = [
+    "Куртки",
+    "Кроссовки",
+    "Кофты",
+    "Штаны",
+    "Тапочки",
+    "Шорты",
+    "Зипки",
+    "Ботинки",
+    "Ремни",
+    "Аксессуары",
+    "Футболки",
+    "Головные уборы"
+]
 
 def main_kb(uid):
     kb = [
@@ -216,6 +229,97 @@ async def delete_product(c: CallbackQuery):
     sql.execute("DELETE FROM products WHERE id=?", (pid,))
     db.commit()
     await c.message.answer("Товар удалён")
+@dp.callback_query(F.data == "add_product")
+async def add_product_start(c: CallbackQuery, state: FSMContext):
+    await c.answer()
+    await c.message.answer("Отправь фото товара")
+    await state.set_state(AddProduct.photo)
+
+@dp.message(AddProduct.photo)
+async def add_photo(m: Message, state: FSMContext):
+    await state.update_data(photo=m.photo[-1].file_id)
+    await m.answer("Название товара")
+    await state.set_state(AddProduct.name)
+
+@dp.message(AddProduct.name)
+async def add_name(m: Message, state: FSMContext):
+    await state.update_data(name=m.text)
+    await m.answer("Цена")
+    await state.set_state(AddProduct.price)
+
+@dp.message(AddProduct.price)
+async def add_price(m: Message, state: FSMContext):
+    if not m.text.isdigit():
+        await m.answer("Введите число")
+        return
+    await state.update_data(price=int(m.text))
+
+    kb = [[InlineKeyboardButton(text=c, callback_data=f"setcat:{c}")] for c in categories]
+    await m.answer("Выберите категорию:", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    await state.set_state(AddProduct.category)
+
+@dp.callback_query(F.data.startswith("setcat:"))
+async def set_category(c: CallbackQuery, state: FSMContext):
+    await c.answer()
+    await state.update_data(category=c.data.split(":")[1])
+    await c.message.answer("Введите размеры через запятую (например: S,M,L или 41,42,43)")
+    await state.set_state(AddProduct.sizes)
+
+@dp.message(AddProduct.sizes)
+async def add_sizes(m: Message, state: FSMContext):
+    data = await state.get_data()
+    sql.execute(
+        "INSERT INTO products(name,price,photo,category,sizes) VALUES(?,?,?,?,?)",
+        (data["name"], data["price"], data["photo"], data["category"], m.text)
+    )
+    db.commit()
+    await m.answer("Товар добавлен")
+    await state.clear()@dp.callback_query(F.data == "add_product")
+async def add_product_start(c: CallbackQuery, state: FSMContext):
+    await c.answer()
+    await c.message.answer("Отправь фото товара")
+    await state.set_state(AddProduct.photo)
+
+@dp.message(AddProduct.photo)
+async def add_photo(m: Message, state: FSMContext):
+    await state.update_data(photo=m.photo[-1].file_id)
+    await m.answer("Название товара")
+    await state.set_state(AddProduct.name)
+
+@dp.message(AddProduct.name)
+async def add_name(m: Message, state: FSMContext):
+    await state.update_data(name=m.text)
+    await m.answer("Цена")
+    await state.set_state(AddProduct.price)
+
+@dp.message(AddProduct.price)
+async def add_price(m: Message, state: FSMContext):
+    if not m.text.isdigit():
+        await m.answer("Введите число")
+        return
+    await state.update_data(price=int(m.text))
+
+    kb = [[InlineKeyboardButton(text=c, callback_data=f"setcat:{c}")] for c in categories]
+    await m.answer("Выберите категорию:", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    await state.set_state(AddProduct.category)
+
+@dp.callback_query(F.data.startswith("setcat:"))
+async def set_category(c: CallbackQuery, state: FSMContext):
+    await c.answer()
+    await state.update_data(category=c.data.split(":")[1])
+    await c.message.answer("Введите размеры через запятую (например: S,M,L или 41,42,43)")
+    await state.set_state(AddProduct.sizes)
+
+@dp.message(AddProduct.sizes)
+async def add_sizes(m: Message, state: FSMContext):
+    data = await state.get_data()
+    sql.execute(
+        "INSERT INTO products(name,price,photo,category,sizes) VALUES(?,?,?,?,?)",
+        (data["name"], data["price"], data["photo"], data["category"], m.text)
+    )
+    db.commit()
+    await m.answer("Товар добавлен")
+    await state.clear()
 
 # ---------- RUN ----------
 async def main():

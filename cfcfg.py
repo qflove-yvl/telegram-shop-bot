@@ -213,14 +213,29 @@ async def admin(m: Message):
 @dp.callback_query(F.data == "all_orders")
 async def all_orders(c: CallbackQuery):
     await c.answer()
-    orders = sql.execute("SELECT * FROM orders").fetchall()
+
+    orders = sql.execute("SELECT id, username, total, items, address, comment FROM orders ORDER BY id DESC").fetchall()
 
     if not orders:
-        await c.message.answer("Заказов нет")
+        await c.message.answer("📭 Заказов пока нет")
         return
 
     for o in orders:
-        await c.message.answer(f"#{o[0]}\n{o[4]}\n{o[3]} ₽\n{o[5]}\n{o[6]}")
+        text = f"""
+🧾 Заказ #{o[0]}
+👤 Клиент: @{o[1]}
+💰 Сумма: {o[2]} ₽
+
+🛍 Товары:
+{o[3]}
+
+📦 Адрес:
+{o[4]}
+
+💬 Комментарий:
+{o[5]}
+"""
+        await c.message.answer(text)
 
 @dp.callback_query(F.data.startswith("del:"))
 async def delete_product(c: CallbackQuery):

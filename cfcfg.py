@@ -1,41 +1,23 @@
 import asyncio
 import sqlite3
 from aiogram import Bot, Dispatcher, F
-from aiogram.types import (
-    Message, CallbackQuery,
-    ReplyKeyboardMarkup, KeyboardButton,
-    InlineKeyboardMarkup, InlineKeyboardButton
-)
+from aiogram.types import Message, CallbackQuery, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import Command
-from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 
 TOKEN = "8204900087:AAEpPTiB01lmVLzrrtl6R1q7jqf1ILzPrQo"
 ADMIN_ID = 1123838913
 MANAGER_USERNAME = "cestlavieq"
 
-# ---------- bot ----------
 bot = Bot(TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
-# ---------- db ----------
 db = sqlite3.connect("shop.db")
 sql = db.cursor()
-edit_price_target = {}
 
-sql.execute("""
-CREATE TABLE IF NOT EXISTS orders(
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER,
-    username TEXT,
-    total INTEGER,
-    address TEXT,
-    comment TEXT
-)
-""")
-db.commit()
-
+# ---------- DATABASE ----------
 sql.execute("""
 CREATE TABLE IF NOT EXISTS products(
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -55,26 +37,38 @@ CREATE TABLE IF NOT EXISTS cart(
 )
 """)
 
+sql.execute("""
+CREATE TABLE IF NOT EXISTS orders(
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    username TEXT,
+    total INTEGER,
+    items TEXT,
+    address TEXT,
+    comment TEXT
+)
+""")
+
 db.commit()
 
-# ---------- states ----------
+# ---------- STATES ----------
 class AddProduct(StatesGroup):
     photo = State()
     name = State()
     price = State()
     category = State()
     sizes = State()
+
 class Checkout(StatesGroup):
     address = State()
     comment = State()
+
 class EditPrice(StatesGroup):
     price = State()
 
-# ---------- keyboards ----------
-start_kb = ReplyKeyboardMarkup(
-    keyboard=[[KeyboardButton(text="▶️ Старт")]],
-    resize_keyboard=True
-)
+edit_price_target = {}
+
+categories = ["Куртки","Футболки","Головные уборы","Обувь","Шорты","Зипки","Аксессуары"]
 
 def main_kb(uid):
     kb = [
@@ -85,46 +79,21 @@ def main_kb(uid):
         kb.append([KeyboardButton(text="⚙ Админ")])
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
 
-categories = [
-    "Куртки","Кроссовки","Кофты","Штаны",
-    "Тапочки","Шорты","Зипки","Ботинки","Ремни","Аксессуары"
-]
-def normalize_category(text: str):
-    for c in categories:
-        if c.lower() == text.lower():
-            return c
-    return None
-# ---------- start ----------
+# ---------- START ----------
 @dp.message(Command("start"))
 async def start(m: Message):
-    await m.answer("Нажми ▶️ Старт", reply_markup=start_kb)
-
-@dp.message(F.text == "▶️ Старт")
-async def open_menu(m: Message):
     await m.answer("Добро пожаловать!", reply_markup=main_kb(m.from_user.id))
 
-# ---------- catalog ----------
+# ---------- MANAGER ----------
+@dp.message(F.text == "💬 Менеджер")
+async def manager(m: Message):
+    await m.answer(f"https://t.me/{MANAGER_USERNAME}")
+
+# ---------- CATALOG ----------
 @dp.message(F.text == "🛍 Каталог")
 async def catalog(m: Message):
     kb = [[InlineKeyboardButton(text=c, callback_data=f"cat:{c}")] for c in categories]
-    await m.answer("Выбери категорию:", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
-
-@dp.message(F.text == "📦 Мои заказы")
-async def my_orders(m: Message):
-    orders = sql.execute(
-        "SELECT id, total, address FROM orders WHERE user_id=? ORDER BY id DESC",
-        (m.from_user.id,)
-    ).fetchall()
-
-    if not orders:
-        await m.answer("У вас пока нет заказов")
-        return
-
-    text = ""
-    for o in orders:
-        text += f"🧾 Заказ #{o[0]}\nСумма: {o[1]} ₽\nАдрес: {o[2]}\n\n"
-
-    await m.answer(text)
+    await m.answer("Выберите категорию:", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
 
 @dp.callback_query(F.data.startswith("cat:"))
 async def show_category(c: CallbackQuery):
@@ -137,12 +106,12 @@ async def show_category(c: CallbackQuery):
         return
 
     for p in items:
-        btns = []
+        buttons = []
         for s in p[5].split(","):
-            btns.append([InlineKeyboardButton(text=s, callback_data=f"add:{p[0]}:{s}")])
+            buttons.append([InlineKeyboardButton(text=s.strip(), callback_data=f"add:{p[0]}:{s.strip()}")])
 
         if c.from_user.id == ADMIN_ID:
-            btns.append([
+            buttons.append([
                 InlineKeyboardButton(text="✏ Цена", callback_data=f"edit:{p[0]}"),
                 InlineKeyboardButton(text="🗑 Удалить", callback_data=f"del:{p[0]}")
             ])
@@ -151,36 +120,10 @@ async def show_category(c: CallbackQuery):
             c.from_user.id,
             p[3],
             caption=f"{p[1]}\nЦена: {p[2]} ₽",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=btns)
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
         )
 
-# ---------- cart ----------
-
-@dp.message(F.text == "💬 Менеджер")
-async def manager(m: Message):
-    await m.answer(f"Написать менеджеру: https://t.me/{MANAGER_USERNAME}")
-
-@dp.callback_query(F.data.startswith("edit:"))
-async def edit_price_start(c: CallbackQuery, state: FSMContext):
-    await c.answer()
-    pid = c.data.split(":")[1]
-    edit_price_target[c.from_user.id] = pid
-    await c.message.answer("Введите новую цену:")
-    await state.set_state(EditPrice.price)
-
-@dp.message(EditPrice.price)
-async def edit_price_save(m: Message, state: FSMContext):
-    if not m.text.isdigit():
-        await m.answer("Введите число")
-        return
-
-    pid = edit_price_target.pop(m.from_user.id)
-    sql.execute("UPDATE products SET price=? WHERE id=?", (int(m.text), pid))
-    db.commit()
-
-    await m.answer("Цена обновлена")
-    await state.clear()
-
+# ---------- CART ----------
 @dp.callback_query(F.data.startswith("add:"))
 async def add_to_cart(c: CallbackQuery):
     await c.answer()
@@ -204,104 +147,67 @@ async def show_cart(m: Message):
     total = sum(i[1] for i in items)
     text = "\n".join([f"{i[0]} ({i[2]}) — {i[1]} ₽" for i in items])
 
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📦 Оформить заказ", callback_data="checkout")]
-    ])
+    await m.answer(text + f"\n\nИтого: {total} ₽",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📦 Оформить заказ", callback_data="checkout")]
+        ])
+    )
 
-    await m.answer(text + f"\n\nИтого: {total} ₽", reply_markup=kb)
+# ---------- CHECKOUT ----------
+@dp.callback_query(F.data == "checkout")
+async def checkout_start(c: CallbackQuery, state: FSMContext):
+    await c.answer()
+    await c.message.answer("Введите адрес доставки")
+    await state.set_state(Checkout.address)
 
-# ---------- admin ----------
+@dp.message(Checkout.address)
+async def checkout_address(m: Message, state: FSMContext):
+    await state.update_data(address=m.text)
+    await m.answer("Комментарий к заказу (или -)")
+    await state.set_state(Checkout.comment)
+
+@dp.message(Checkout.comment)
+async def checkout_finish(m: Message, state: FSMContext):
+    data = await state.get_data()
+    items = sql.execute("""
+    SELECT products.name, products.price, cart.size
+    FROM cart JOIN products ON cart.product_id = products.id
+    WHERE cart.user_id=?
+    """, (m.from_user.id,)).fetchall()
+
+    items_text = ", ".join([f"{i[0]} ({i[2]})" for i in items])
+    total = sum(i[1] for i in items)
+
+    sql.execute("INSERT INTO orders(user_id,username,total,items,address,comment) VALUES(?,?,?,?,?,?)",
+        (m.from_user.id, m.from_user.username, total, items_text, data["address"], m.text))
+    sql.execute("DELETE FROM cart WHERE user_id=?", (m.from_user.id,))
+    db.commit()
+
+    await m.answer("Заказ оформлен!")
+    await bot.send_message(ADMIN_ID, f"Новый заказ:\n{items_text}\nСумма: {total}")
+    await state.clear()
+
+# ---------- ADMIN ----------
 @dp.message(F.text == "⚙ Админ")
 async def admin(m: Message):
     if m.from_user.id != ADMIN_ID:
         return
-
-    kb = InlineKeyboardMarkup(inline_keyboard=[
+    await m.answer("Админ панель", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="➕ Добавить товар", callback_data="add_product")],
         [InlineKeyboardButton(text="📦 Все заказы", callback_data="all_orders")]
-    ])
-    await m.answer("Админ панель:", reply_markup=kb)
+    ]))
 
 @dp.callback_query(F.data == "all_orders")
 async def all_orders(c: CallbackQuery):
     await c.answer()
-
-    orders = sql.execute(
-        "SELECT id, username, total, address, comment FROM orders ORDER BY id DESC"
-    ).fetchall()
+    orders = sql.execute("SELECT * FROM orders").fetchall()
 
     if not orders:
-        await c.message.answer("Заказов пока нет")
+        await c.message.answer("Заказов нет")
         return
 
     for o in orders:
-        await c.message.answer(
-            f"🧾 Заказ #{o[0]}\n"
-            f"Пользователь: @{o[1]}\n"
-            f"Сумма: {o[2]} ₽\n"
-            f"Адрес: {o[3]}\n"
-            f"Комментарий: {o[4]}"
-        )
-
-@dp.callback_query(F.data == "add_product")
-async def add_product_start(c: CallbackQuery, state: FSMContext):
-    await c.answer()
-    await c.message.answer("Отправь фото товара")
-    await state.set_state(AddProduct.photo)
-
-@dp.message(AddProduct.photo)
-async def add_photo(m: Message, state: FSMContext):
-    await state.update_data(photo=m.photo[-1].file_id)
-    await m.answer("Название товара")
-    await state.set_state(AddProduct.name)
-
-@dp.message(AddProduct.name)
-async def add_name(m: Message, state: FSMContext):
-    await state.update_data(name=m.text)
-    await m.answer("Цена")
-    await state.set_state(AddProduct.price)
-
-@dp.callback_query(F.data.startswith("setcat:"))
-async def set_category(c: CallbackQuery, state: FSMContext):
-    await c.answer()
-    cat = c.data.split(":")[1]
-    await state.update_data(category=cat)
-    await c.message.answer("Введите размеры через запятую (например: S,M,L,XL)")
-    await state.set_state(AddProduct.sizes)
-
-@dp.message(AddProduct.price)
-async def add_price(m: Message, state: FSMContext):
-    if not m.text.isdigit():
-        await m.answer("Введите число")
-        return
-
-    await state.update_data(price=int(m.text))
-
-    kb = [[InlineKeyboardButton(text=c, callback_data=f"setcat:{c}")] for c in categories]
-    await m.answer("Выберите категорию товара:", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
-    await state.set_state(AddProduct.category)
-
-@dp.message(AddProduct.category)
-async def add_category(m: Message, state: FSMContext):
-    cat = normalize_category(m.text)
-    if not cat:
-        await m.answer("❌ Такой категории нет. Выберите кнопку.")
-        return
-
-    await state.update_data(category=cat)
-    await m.answer("Введите размеры через запятую (например: S,M,L,XL)")
-    await state.set_state(AddProduct.sizes)
-
-@dp.message(AddProduct.sizes)
-async def add_sizes(m: Message, state: FSMContext):
-    data = await state.get_data()
-    sql.execute(
-        "INSERT INTO products(name,price,photo,category,sizes) VALUES(?,?,?,?,?)",
-        (data["name"], data["price"], data["photo"], data["category"], m.text)
-    )
-    db.commit()
-    await m.answer("Товар добавлен")
-    await state.clear()
+        await c.message.answer(f"#{o[0]}\n{o[4]}\n{o[3]} ₽\n{o[5]}\n{o[6]}")
 
 @dp.callback_query(F.data.startswith("del:"))
 async def delete_product(c: CallbackQuery):
@@ -309,49 +215,9 @@ async def delete_product(c: CallbackQuery):
     pid = c.data.split(":")[1]
     sql.execute("DELETE FROM products WHERE id=?", (pid,))
     db.commit()
-    await c.message.answer("🗑 Товар удалён")
-@dp.callback_query(F.data == "checkout")
-async def checkout_start(c: CallbackQuery, state: FSMContext):
-    await c.answer()
-    await c.message.answer("Введите адрес доставки:")
-    await state.set_state(Checkout.address)
+    await c.message.answer("Товар удалён")
 
-@dp.message(Checkout.address)
-async def checkout_address(m: Message, state: FSMContext):
-    await state.update_data(address=m.text)
-    await m.answer("Комментарий к заказу? (если нет — напишите -)")
-    await state.set_state(Checkout.comment)
-
-@dp.message(Checkout.comment)
-async def checkout_comment(m: Message, state: FSMContext):
-    data = await state.get_data()
-
-    items = sql.execute("""
-    SELECT products.name, products.price, cart.size
-    FROM cart JOIN products ON cart.product_id = products.id
-    WHERE cart.user_id=?
-    """, (m.from_user.id,)).fetchall()
-
-    total = sum(i[1] for i in items)
-    username = m.from_user.username or "no_username"
-
-    sql.execute(
-        "INSERT INTO orders(user_id, username, total, address, comment) VALUES(?,?,?,?,?)",
-        (m.from_user.id, username, total, data["address"], m.text)
-    )
-
-    sql.execute("DELETE FROM cart WHERE user_id=?", (m.from_user.id,))
-    db.commit()
-
-    await m.answer("✅ Заказ оформлен! Мы с вами свяжемся.")
-    await bot.send_message(
-        ADMIN_ID,
-        f"📦 Новый заказ\n@{username}\nСумма: {total} ₽\nАдрес: {data['address']}\nКомментарий: {m.text}"
-    )
-
-    await state.clear()
-
-# ---------- run ----------
+# ---------- RUN ----------
 async def main():
     await dp.start_polling(bot)
 

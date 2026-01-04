@@ -180,24 +180,59 @@ async def checkout_address(m: Message, state: FSMContext):
     await state.set_state(Checkout.comment)
 
 @dp.message(Checkout.comment)
-async def checkout_finish(m: Message, state: FSMContext):
+async def checkout_comment(m: Message, state: FSMContext):
     data = await state.get_data()
+    comment = m.text
+
+    # Берём корзину пользователя
     items = sql.execute("""
     SELECT products.name, products.price, cart.size
-    FROM cart JOIN products ON cart.product_id = products.id
+    FROM cart
+    JOIN products ON cart.product_id = products.id
     WHERE cart.user_id=?
     """, (m.from_user.id,)).fetchall()
 
-    items_text = ", ".join([f"{i[0]} ({i[2]})" for i in items])
-    total = sum(i[1] for i in items)
+    if not items:
+        await m.answer("❌ Корзина пуста")
+        await state.clear()
+        return
 
-    sql.execute("INSERT INTO orders(user_id,username,total,items,address,comment) VALUES(?,?,?,?,?,?)",
-        (m.from_user.id, m.from_user.username, total, items_text, data["address"], m.text))
+    total = 0
+    items_text = ""
+
+    for name, price, size in items:
+        total += price
+        items_text += f"{name} ({size}) — {price} ₽\n"
+
+    sql.execute(
+        "INSERT INTO orders (user_id, username, total, items, address, comment) VALUES (?, ?, ?, ?, ?, ?)",
+        (
+            m.from_user.id,
+            m.from_user.username or "no_username",
+            total,
+            items_text,
+            data["address"],
+            comment
+        )
+    )
+    db.commit()
+
+    # очищаем корзину
     sql.execute("DELETE FROM cart WHERE user_id=?", (m.from_user.id,))
     db.commit()
 
-    await m.answer("Заказ оформлен!")
-    await bot.send_message(ADMIN_ID, f"Новый заказ:\n{items_text}\nСумма: {total}")
+    await m.answer("✅ Заказ оформлен! Мы с вами свяжемся.")
+
+    await bot.send_message(
+        ADMIN_ID,
+        f"📦 Новый заказ\n"
+        f"👤 @{m.from_user.username}\n"
+        f"{items_text}\n"
+        f"💰 Итого: {total} ₽\n"
+        f"📦 Адрес: {data['address']}\n"
+        f"💬 Комментарий: {comment}"
+    )
+
     await state.clear()
 
 # ---------- ADMIN ----------

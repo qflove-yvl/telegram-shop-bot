@@ -66,6 +66,24 @@ class Checkout(StatesGroup):
 class EditPrice(StatesGroup):
     price = State()
 
+@dp.message(EditPrice.price)
+async def edit_price_save(m: Message, state: FSMContext):
+    if not m.text.isdigit():
+        await m.answer("Введите число")
+        return
+
+    pid = edit_price_target.get(m.from_user.id)
+    if not pid:
+        await m.answer("Ошибка")
+        await state.clear()
+        return
+
+    sql.execute("UPDATE products SET price=? WHERE id=?", (int(m.text), pid))
+    db.commit()
+
+    await m.answer("✅ Цена обновлена")
+    await state.clear()
+
 edit_price_target = {}
 
 categories = [
@@ -101,6 +119,28 @@ async def start(m: Message):
 @dp.message(F.text == "💬 Менеджер")
 async def manager(m: Message):
     await m.answer(f"https://t.me/{MANAGER_USERNAME}")
+
+@dp.message(F.text == "📦 Мои заказы")
+async def my_orders(m: Message):
+    orders = sql.execute(
+        "SELECT id, total, items, address FROM orders WHERE user_id=? ORDER BY id DESC",
+        (m.from_user.id,)
+    ).fetchall()
+
+    if not orders:
+        await m.answer("📭 У вас пока нет заказов")
+        return
+
+    text = ""
+    for o in orders:
+        text += (
+            f"🧾 Заказ #{o[0]}\n"
+            f"{o[2]}\n"
+            f"💰 Сумма: {o[1]} ₽\n"
+            f"📦 Адрес: {o[3]}\n\n"
+        )
+
+    await m.answer(text)
 
 # ---------- CATALOG ----------
 @dp.message(F.text == "🛍 Каталог")
@@ -144,6 +184,16 @@ async def add_to_cart(c: CallbackQuery):
     sql.execute("INSERT INTO cart VALUES(?,?,?)", (c.from_user.id, pid, size))
     db.commit()
     await c.message.answer("Добавлено в корзину")
+
+@dp.callback_query(F.data.startswith("edit:"))
+async def edit_price_start(c: CallbackQuery, state: FSMContext):
+    await c.answer()
+
+    pid = int(c.data.split(":")[1])
+    edit_price_target[c.from_user.id] = pid
+
+    await c.message.answer("Введите новую цену товара:")
+    await state.set_state(EditPrice.price)
 
 @dp.message(F.text == "🛒 Корзина")
 async def show_cart(m: Message):
@@ -275,7 +325,7 @@ async def all_orders(c: CallbackQuery):
 @dp.callback_query(F.data.startswith("del:"))
 async def delete_product(c: CallbackQuery):
     await c.answer()
-    pid = c.data.split(":")[1]
+    pid = int(c.data.split(":")[1])
     sql.execute("DELETE FROM products WHERE id=?", (pid,))
     db.commit()
     await c.message.answer("Товар удалён")

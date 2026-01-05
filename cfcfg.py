@@ -51,6 +51,21 @@ CREATE TABLE IF NOT EXISTS orders(
 
 db.commit()
 
+sql.execute("""
+CREATE TABLE IF NOT EXISTS categories(
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT UNIQUE
+)
+""")
+db.commit()
+
+for c in ["Куртки","Кофты","Штаны","Обувь","Аксессуары","Футболки","Головные уборы"]:
+    try:
+        sql.execute("INSERT INTO categories(name) VALUES(?)", (c,))
+    except:
+        pass
+db.commit()
+
 # ---------- STATES ----------
 class AddProduct(StatesGroup):
     photo = State()
@@ -65,6 +80,26 @@ class Checkout(StatesGroup):
 
 class EditPrice(StatesGroup):
     price = State()
+
+class AddCategory(StatesGroup):
+    name = State()
+
+@dp.callback_query(F.data == "addcat")
+async def add_category_start(c: CallbackQuery, state: FSMContext):
+    await c.answer()
+    await c.message.answer("Введите название новой категории:")
+    await state.set_state(AddCategory.name)
+
+@dp.message(AddCategory.name)
+async def add_category_save(m: Message, state: FSMContext):
+    try:
+        sql.execute("INSERT INTO categories(name) VALUES(?)", (m.text,))
+        db.commit()
+        await m.answer("✅ Категория добавлена")
+    except:
+        await m.answer("❌ Такая категория уже есть")
+
+    await state.clear()
 
 @dp.message(EditPrice.price)
 async def edit_price_save(m: Message, state: FSMContext):
@@ -86,20 +121,8 @@ async def edit_price_save(m: Message, state: FSMContext):
 
 edit_price_target = {}
 
-categories = [
-    "Куртки",
-    "Кроссовки",
-    "Кофты",
-    "Штаны",
-    "Тапочки",
-    "Шорты",
-    "Зипки",
-    "Ботинки",
-    "Ремни",
-    "Аксессуары",
-    "Футболки",
-    "Головные уборы"
-]
+def get_categories():
+    return [c[0] for c in sql.execute("SELECT name FROM categories").fetchall()]
 
 def main_kb(uid):
     kb = [
@@ -145,7 +168,7 @@ async def my_orders(m: Message):
 # ---------- CATALOG ----------
 @dp.message(F.text == "🛍 Каталог")
 async def catalog(m: Message):
-    kb = [[InlineKeyboardButton(text=c, callback_data=f"cat:{c}")] for c in categories]
+    kb = [[InlineKeyboardButton(text=c, callback_data=f"cat:{c}")] for c in get_categories()]
     await m.answer("Выберите категорию:", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
 
 @dp.callback_query(F.data.startswith("cat:"))
@@ -290,11 +313,15 @@ async def checkout_comment(m: Message, state: FSMContext):
 async def admin(m: Message):
     if m.from_user.id != ADMIN_ID:
         return
-    await m.answer("Админ панель", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="➕ Добавить товар", callback_data="add_product")],
-        [InlineKeyboardButton(text="📦 Все заказы", callback_data="all_orders")]
-    ]))
 
+    await m.answer(
+        "Админ панель",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="➕ Добавить товар", callback_data="add_product")],
+            [InlineKeyboardButton(text="📦 Все заказы", callback_data="all_orders")],
+            [InlineKeyboardButton(text="🗂 Категории", callback_data="admin_categories")]
+        ])
+    )
 @dp.callback_query(F.data == "all_orders")
 async def all_orders(c: CallbackQuery):
     await c.answer()
@@ -321,6 +348,28 @@ async def all_orders(c: CallbackQuery):
 {o[5]}
 """
         await c.message.answer(text)
+
+@dp.callback_query(F.data == "admin_categories")
+async def admin_categories(c: CallbackQuery):
+    await c.answer()
+
+    kb = []
+    for c in get_categories():
+        kb.append([
+            InlineKeyboardButton(text=f"❌ {c}", callback_data=f"delcat:{c}")
+        ])
+
+    kb.append([InlineKeyboardButton(text="➕ Добавить категорию", callback_data="addcat")])
+
+    await c.message.answer("Управление категориями:", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+
+@dp.callback_query(F.data.startswith("delcat:"))
+async def delete_category(c: CallbackQuery):
+    await c.answer()
+    name = c.data.split(":")[1]
+    sql.execute("DELETE FROM categories WHERE name=?", (name,))
+    db.commit()
+    await c.message.answer(f"❌ Категория {name} удалена")
 
 @dp.callback_query(F.data.startswith("del:"))
 async def delete_product(c: CallbackQuery):
@@ -354,7 +403,7 @@ async def add_price(m: Message, state: FSMContext):
         return
     await state.update_data(price=int(m.text))
 
-    kb = [[InlineKeyboardButton(text=c, callback_data=f"setcat:{c}")] for c in categories]
+    kb = [[InlineKeyboardButton(text=c, callback_data=f"setcat:{c}")] for c in get_categories()]
     await m.answer("Выберите категорию:", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
     await state.set_state(AddProduct.category)
 
@@ -399,7 +448,7 @@ async def add_price(m: Message, state: FSMContext):
         return
     await state.update_data(price=int(m.text))
 
-    kb = [[InlineKeyboardButton(text=c, callback_data=f"setcat:{c}")] for c in categories]
+    kb = [[InlineKeyboardButton(text=c, callback_data=f"setcat:{c}")] for c in get_categories()]
     await m.answer("Выберите категорию:", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
     await state.set_state(AddProduct.category)
 

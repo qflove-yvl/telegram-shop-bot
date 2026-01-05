@@ -218,6 +218,36 @@ async def edit_price_start(c: CallbackQuery, state: FSMContext):
     await c.message.answer("Введите новую цену товара:")
     await state.set_state(EditPrice.price)
 
+@dp.callback_query(F.data.startswith("delcat:"))
+async def delete_category(c: CallbackQuery):
+    await c.answer()
+    name = c.data.split(":")[1]
+
+    sql.execute("DELETE FROM categories WHERE name=?", (name,))
+    db.commit()
+
+    await c.message.answer(f"❌ Категория {name} удалена")
+
+@dp.callback_query(F.data == "admin_categories")
+async def admin_categories(c: CallbackQuery):
+    await c.answer()
+
+    cats = sql.execute("SELECT name FROM categories").fetchall()
+
+    if not cats:
+        await c.message.answer("Категорий пока нет")
+        return
+
+    kb = []
+    for c_name in cats:
+        kb.append([
+            InlineKeyboardButton(text=f"❌ {c_name[0]}", callback_data=f"delcat:{c_name[0]}")
+        ])
+
+    kb.append([InlineKeyboardButton(text="➕ Добавить категорию", callback_data="addcat")])
+
+    await c.message.answer("Управление категориями:", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+
 @dp.message(F.text == "🛒 Корзина")
 async def show_cart(m: Message):
     items = sql.execute("""

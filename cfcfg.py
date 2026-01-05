@@ -51,6 +51,51 @@ CREATE TABLE IF NOT EXISTS orders(
 
 db.commit()
 
+RULES_TEXT = """
+📜 ПРАВИЛА И ГАРАНТИИ
+
+1. Оплата производится напрямую продавцу через ЮMoney или перевод.
+2. Бот является технической платформой для оформления заказов.
+3. После оплаты продавец обязан отправить товар клиенту.
+4. В случае проблем вы можете написать менеджеру.
+5. Заказы, оформленные без оплаты, не обрабатываются.
+6. Возврат возможен только по договорённости с продавцом.
+
+Нажимая «Оплатить заказ», вы соглашаетесь с этими правилами.
+"""
+
+PAY_TEXT = """
+💳 ОПЛАТА ЗАКАЗА
+
+Переведите сумму по номеру через СБП:
+
+📱 +7 929 357-16-68
+Банк: Тинькофф
+
+В комментарии к переводу укажите:
+👉 Ваш Telegram (@username)
+
+После оплаты нажмите кнопку «Я оплатил».
+"""
+
+@dp.callback_query(F.data == "pay")
+async def pay_info(c: CallbackQuery):
+    await c.answer()
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Я оплатил", callback_data="paid")]
+    ])
+    await c.message.answer(PAY_TEXT, reply_markup=kb)
+
+@dp.callback_query(F.data == "paid")
+async def paid(c: CallbackQuery):
+    await c.answer("Ожидаем подтверждение")
+    await c.message.answer("Спасибо! Менеджер проверит оплату.")
+
+    await bot.send_message(
+        ADMIN_ID,
+        f"💰 @{c.from_user.username} нажал «Я оплатил». Проверь перевод на +79293571668"
+    )
+
 sql.execute("""
 CREATE TABLE IF NOT EXISTS categories(
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -127,7 +172,8 @@ def get_categories():
 def main_kb(uid):
     kb = [
         [KeyboardButton(text="🛍 Каталог"), KeyboardButton(text="🛒 Корзина")],
-        [KeyboardButton(text="📦 Мои заказы"), KeyboardButton(text="💬 Менеджер")]
+        [KeyboardButton(text="📦 Мои заказы"), KeyboardButton(text="💬 Менеджер")],
+        [KeyboardButton(text="📜 Гарантии и правила")]
     ]
     if uid == ADMIN_ID:
         kb.append([KeyboardButton(text="⚙ Админ")])
@@ -142,6 +188,10 @@ async def start(m: Message):
 @dp.message(F.text == "💬 Менеджер")
 async def manager(m: Message):
     await m.answer(f"https://t.me/{MANAGER_USERNAME}")
+
+@dp.message(F.text == "📜 Гарантии и правила")
+async def rules(m: Message):
+    await m.answer(RULES_TEXT)
 
 @dp.message(F.text == "📦 Мои заказы")
 async def my_orders(m: Message):
@@ -264,10 +314,11 @@ async def show_cart(m: Message):
     text = "\n".join([f"{i[0]} ({i[2]}) — {i[1]} ₽" for i in items])
 
     await m.answer(text + f"\n\nИтого: {total} ₽",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📦 Оформить заказ", callback_data="checkout")]
-        ])
-    )
+                   reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                       [InlineKeyboardButton(text="💳 Оплатить", callback_data="pay")],
+                       [InlineKeyboardButton(text="📦 Оформить заказ", callback_data="checkout")]
+                   ])
+                   )
 
 # ---------- CHECKOUT ----------
 @dp.callback_query(F.data == "checkout")
